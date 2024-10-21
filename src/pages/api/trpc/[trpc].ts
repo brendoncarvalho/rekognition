@@ -1,10 +1,10 @@
 import * as trpc from '@trpc/server';
+import { TRPCError } from '@trpc/server';
 import * as trpcNext from '@trpc/server/adapters/next';
-import { z } from 'zod';
 import * as AWS from 'aws-sdk';
 import Rekognition from 'aws-sdk/clients/rekognition';
 import S3 from 'aws-sdk/clients/s3';
-import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
 import { uuid } from '../../../utils/uuid';
 
 // configure aws global credentials
@@ -29,9 +29,9 @@ export const appRouter = trpc
       .nullish(),
     async resolve({ input }) {
       const res = await rekog
-        .listFaces({ CollectionId: 'find-my-tween' })
+        .listFaces({ CollectionId: 'controle-acesso' })
         .promise();
-      console.log(res.Faces);
+      // console.log(res.Faces);
       return {
         greeting: `hello ${input?.text ?? 'world'}`,
       };
@@ -57,7 +57,7 @@ export const appRouter = trpc
       // Add face to rekognition collection
       await rekog
         .indexFaces({
-          CollectionId: 'find-my-tween',
+          CollectionId: 'controle-acesso',
           ExternalImageId: imageId,
           Image: {
             Bytes: imgBuffer,
@@ -67,7 +67,7 @@ export const appRouter = trpc
       // Add face to s3 bucket
       await s3
         .putObject({
-          Bucket: 'find-my-tween',
+          Bucket: 'controle-acesso',
           Key: 'faces/' + imageId + '.jpg',
           Body: imgBuffer,
         })
@@ -84,7 +84,7 @@ export const appRouter = trpc
       const imgBuffer = Buffer.from(base64Img, 'base64');
       const res = await rekog
         .searchFacesByImage({
-          CollectionId: 'find-my-tween',
+          CollectionId: 'controle-acesso',
           Image: {
             Bytes: imgBuffer,
           },
@@ -97,7 +97,7 @@ export const appRouter = trpc
         // get the image from s3
         const s3Res = await s3
           .getObject({
-            Bucket: 'find-my-tween',
+            Bucket: 'controle-acesso',
             Key: 'faces/' + face.Face?.ExternalImageId + '.jpg',
           })
           .promise();

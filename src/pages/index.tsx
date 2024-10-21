@@ -26,7 +26,7 @@ const Home: NextPage = () => {
         { image: imageSrc },
         {
           onSuccess(data) {
-            console.log(data);
+            // console.log(data);
             setMatchResult(data.matchedFaces);
             setBestMatchImages(data.images ?? []);
           },
