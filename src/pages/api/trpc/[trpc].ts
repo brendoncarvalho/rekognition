@@ -7,7 +7,7 @@ import S3 from 'aws-sdk/clients/s3';
 import { z } from 'zod';
 import { uuid } from '../../../utils/uuid';
 
-// configure aws global credentials
+// Configure AWS global credentials
 if (process.env.PB_ACCESS_KEY_ID) {
   AWS.config.update({
     accessKeyId: process.env.PB_ACCESS_KEY_ID,
@@ -31,7 +31,6 @@ export const appRouter = trpc
       const res = await rekog
         .listFaces({ CollectionId: 'controle-acesso' })
         .promise();
-      // console.log(res.Faces);
       return {
         greeting: `hello ${input?.text ?? 'world'}`,
       };
@@ -43,36 +42,38 @@ export const appRouter = trpc
     }),
     async resolve({ input }) {
       try {
+        const base64Img = input.image.replace('data:image/jpeg;base64,', '');
+        const imgBuffer = Buffer.from(base64Img, 'base64');
+        const imageId = uuid();
+
+        // Indexar face no Rekognition
+        await rekog
+          .indexFaces({
+            CollectionId: 'controle-acesso',
+            ExternalImageId: imageId,
+            Image: {
+              Bytes: imgBuffer,
+            },
+          })
+          .promise();
+
+        // Adicionar face ao S3
+        await s3
+          .putObject({
+            Bucket: 'controle-acesso',
+            Key: 'faces/' + imageId + '.jpg',
+            Body: imgBuffer,
+            ContentType: 'image/jpeg', // Definir tipo de conteúdo
+          })
+          .promise();
+        return true;
       } catch (e) {
         console.error(e);
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: 'Failed to index face',
+          message: 'Falha ao indexar rosto',
         });
       }
-      const base64Img = input.image.replace('data:image/jpeg;base64,', '');
-      const imgBuffer = Buffer.from(base64Img, 'base64');
-      // create a unique id for the image
-      const imageId = uuid();
-      // Add face to rekognition collection
-      await rekog
-        .indexFaces({
-          CollectionId: 'controle-acesso',
-          ExternalImageId: imageId,
-          Image: {
-            Bytes: imgBuffer,
-          },
-        })
-        .promise();
-      // Add face to s3 bucket
-      await s3
-        .putObject({
-          Bucket: 'controle-acesso',
-          Key: 'faces/' + imageId + '.jpg',
-          Body: imgBuffer,
-        })
-        .promise();
-      return true;
     },
   })
   .mutation('searchFaceByImage', {
@@ -80,39 +81,44 @@ export const appRouter = trpc
       image: z.string(),
     }),
     async resolve({ input }) {
-      const base64Img = input.image.replace('data:image/jpeg;base64,', '');
-      const imgBuffer = Buffer.from(base64Img, 'base64');
-      const res = await rekog
-        .searchFacesByImage({
-          CollectionId: 'controle-acesso',
-          Image: {
-            Bytes: imgBuffer,
-          },
-        })
-        .promise();
-
-      const images = [];
-      // loop faces
-      for (const face of res.FaceMatches ?? []) {
-        // get the image from s3
-        const s3Res = await s3
-          .getObject({
-            Bucket: 'controle-acesso',
-            Key: 'faces/' + face.Face?.ExternalImageId + '.jpg',
+      try {
+        const base64Img = input.image.replace('data:image/jpeg;base64,', '');
+        const imgBuffer = Buffer.from(base64Img, 'base64');
+        const res = await rekog
+          .searchFacesByImage({
+            CollectionId: 'controle-acesso',
+            Image: {
+              Bytes: imgBuffer,
+            },
           })
           .promise();
-        // convert to base64
-        const base64 = s3Res.Body?.toString('base64');
-        images.push(base64);
+
+        // Buscar imagens no S3 de forma otimizada com Promise.all
+        const images = await Promise.all(
+          res.FaceMatches?.map(async (face) => {
+            const s3Res = await s3
+              .getObject({
+                Bucket: 'controle-acesso',
+                Key: 'faces/' + face.Face?.ExternalImageId + '.jpg',
+              })
+              .promise();
+            return s3Res.Body?.toString('base64');
+          }) ?? []
+        );
+
+        return { matchedFaces: res.FaceMatches, images };
+      } catch (e) {
+        console.error('Erro ao buscar rosto:', e);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Erro ao buscar rosto no AWS Rekognition',
+        });
       }
-      return { matchedFaces: res.FaceMatches, images };
     },
   });
 
-// export type definition of API
 export type AppRouter = typeof appRouter;
 
-// export API handler
 export default trpcNext.createNextApiHandler({
   router: appRouter,
   createContext: () => null,
